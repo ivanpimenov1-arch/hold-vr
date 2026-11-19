@@ -60,8 +60,8 @@
 </div>
 <script>
 (() => {
-  // LOCKS[0] — this release; LOCKS[1] — the previous release, opened only when this one cannot be loaded (offline after an update).
-  const LOCKS = [{"file":"tour-3b5f7b2003.bin","size":12761787,"iter":600000,"salt":"zWW8EqgNuFgC42IkzT+xdw==","ivc":"AikwQ3lwlvXZLc+f","chk":"OvR0kCwzat7Fawnl9kSMI08fqXjfcf8=","version":"2026-11-19 · 3b5f7b2"},{"file":"tour-20503cf142.bin","size":8567044,"iter":600000,"salt":"h1GDTCL1Hn+JcFti0lvLiQ==","ivc":"u+e1hBgyA+XGmEGi","chk":"esDUc/OCgpurhXB6L2JS0/17gUWAQts=","version":"первой публикации"}];
+  // LOCKS[0] — this release; LOCKS[1..] — earlier releases (newest first), opened only when this one cannot be loaded (offline after an update).
+  const LOCKS = [{"file":"tour-20a3e22068.bin","size":12764354,"iter":600000,"salt":"XsydKGN9A6EqToyblzF/rg==","ivc":"C3xv1fp+Nj+7An5P","chk":"js9cbpORDvTMyS793SC8xM667guQw/U=","version":"2026-11-19 · 20a3e22"},{"file":"tour-3b5f7b2003.bin","size":12761787,"iter":600000,"salt":"zWW8EqgNuFgC42IkzT+xdw==","ivc":"AikwQ3lwlvXZLc+f","chk":"OvR0kCwzat7Fawnl9kSMI08fqXjfcf8=","version":"2026-11-19 · 3b5f7b2"},{"file":"tour-20503cf142.bin","size":8567044,"iter":600000,"salt":"h1GDTCL1Hn+JcFti0lvLiQ==","ivc":"u+e1hBgyA+XGmEGi","chk":"esDUc/OCgpurhXB6L2JS0/17gUWAQts=","version":"первой публикации"}];
   const LOCK = LOCKS[0];
   const PIN_LEN = 4, STORE = 'hold-vr-pin', TOURS = 'hold-vr-tours', PAGES = 'hold-vr-pages';
   const SELF = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;   // this page as served, kept as the offline copy
@@ -94,8 +94,7 @@
   // start downloading right away, while the code is being typed
   let loaded = false;
   const bin = getBin(LOCK, true).catch(async (e) => {
-    const prev = LOCKS[1];
-    if (prev) { try { const r = await getBin(prev, false); $('bar').style.width = '100%'; return r; } catch (e2) { /* report the first error */ } }
+    for (const prev of LOCKS.slice(1)) { try { const r = await getBin(prev, false); $('bar').style.width = '100%'; return r; } catch (e2) { /* next saved release */ } }
     throw e;
   });
   bin.then(() => { loaded = true; }, () => msg('Нет связи с сервером. Проверьте интернет и обновите страницу.', true));
