@@ -1,0 +1,13 @@
+{
+  "name": "HOLD — виртуальный тур",
+  "short_name": "HOLD VR",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0B1916",
+  "theme_color": "#0B1916",
+  "icons": [
+    { "src": "icon-192.png", "type": "image/png", "sizes": "192x192", "purpose": "any" },
+    { "src": "icon-512.png", "type": "image/png", "sizes": "512x512", "purpose": "any" }
+  ]
+}
