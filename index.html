@@ -36,6 +36,7 @@
   .hidden { display:none !important; }
   .remember { display:inline-flex; gap:10px; align-items:center; margin-top:18px; color:var(--mu); font-size:15px; cursor:pointer; }
   .remember input { width:20px; height:20px; accent-color:var(--green); }
+  .ver { margin:14px 0 0; color:var(--mu); font-size:13px; opacity:.75; }
 </style>
 </head>
 <body>
@@ -55,47 +56,90 @@
   </div>
   <p class="msg" id="msg"></p>
   <div class="bar"><i id="bar"></i></div>
+  <p class="ver" id="ver"></p>
 </div>
 <script>
 (() => {
-  const LOCK = {"file": "tour-20503cf142.bin", "size": 8567044, "iter": 600000, "salt": "h1GDTCL1Hn+JcFti0lvLiQ==", "ivc": "u+e1hBgyA+XGmEGi", "chk": "esDUc/OCgpurhXB6L2JS0/17gUWAQts="};
-  const PIN_LEN = 4, STORE = 'hold-vr-pin';
+  // LOCKS[0] — this release; LOCKS[1] — the previous release, opened only when this one cannot be loaded (offline after an update).
+  const LOCKS = [{"file":"tour-3b5f7b2003.bin","size":12761787,"iter":600000,"salt":"zWW8EqgNuFgC42IkzT+xdw==","ivc":"AikwQ3lwlvXZLc+f","chk":"OvR0kCwzat7Fawnl9kSMI08fqXjfcf8=","version":"2026-11-19 · 3b5f7b2"},{"file":"tour-20503cf142.bin","size":8567044,"iter":600000,"salt":"h1GDTCL1Hn+JcFti0lvLiQ==","ivc":"u+e1hBgyA+XGmEGi","chk":"esDUc/OCgpurhXB6L2JS0/17gUWAQts=","version":"первой публикации"}];
+  const LOCK = LOCKS[0];
+  const PIN_LEN = 4, STORE = 'hold-vr-pin', TOURS = 'hold-vr-tours', PAGES = 'hold-vr-pages';
+  const SELF = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;   // this page as served, kept as the offline copy
   const $ = (id) => document.getElementById(id);
   const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const msg = (t, bad) => { $('msg').textContent = t; $('msg').classList.toggle('bad', !!bad); };
   const store = { get() { try { return localStorage.getItem(STORE); } catch (e) { return null; } },
                   set(v) { try { v ? localStorage.setItem(STORE, v) : localStorage.removeItem(STORE); } catch (e) {} } };
+  $('ver').textContent = 'Версия ' + LOCK.version;
 
-  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+  const local = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || local)) navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
 
-  // start downloading the tour right away, while the code is being typed
-  let got = 0;
-  const bin = fetch(LOCK.file).then(async (r) => {
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const total = +r.headers.get('content-length') || LOCK.size, rd = r.body.getReader(), parts = [];
-    for (;;) { const { done, value } = await rd.read(); if (done) break; parts.push(value); got += value.length; $('bar').style.width = Math.min(100, got / total * 100) + '%'; }
-    const out = new Uint8Array(got); let o = 0; for (const p of parts) { out.set(p, o); o += p.length; } return out;
-  });
-  bin.catch(() => msg('Нет связи с сервером. Проверьте интернет и обновите страницу.', true));
-
-  async function keyFor(pin) {
-    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pin), 'PBKDF2', false, ['deriveKey']);
-    return crypto.subtle.deriveKey({ name: 'PBKDF2', salt: b64(LOCK.salt), iterations: LOCK.iter, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+  // the tour file: from this device first (its name carries its hash), otherwise from the network
+  async function fromCache(lock) {
+    if (!('caches' in window)) return null;
+    try { return (await caches.match(new URL(lock.file, location.href).href)) || null; } catch (e) { return null; }
   }
-  async function check(key) {
-    try { await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64(LOCK.ivc) }, key, b64(LOCK.chk)); return true; } catch (e) { return false; }
+  async function getBin(lock, progress) {
+    let r = await fromCache(lock); const cached = !!r;
+    if (!r) { r = await fetch(lock.file); if (!r.ok) throw new Error('HTTP ' + r.status); }
+    const total = +r.headers.get('content-length') || lock.size, rd = r.body.getReader(), parts = []; let got = 0;
+    for (;;) { const { done, value } = await rd.read(); if (done) break; parts.push(value); got += value.length; if (progress) $('bar').style.width = Math.min(100, got / total * 100) + '%'; }
+    if (got !== lock.size) throw new Error('файл тура загружен не полностью');
+    const out = new Uint8Array(got); let o = 0; for (const p of parts) { out.set(p, o); o += p.length; }
+    if (String.fromCharCode(...out.subarray(0, 5)) !== 'HOLD1') throw new Error('повреждённый файл тура');
+    return { lock, bytes: out, cached };
+  }
+  // start downloading right away, while the code is being typed
+  let loaded = false;
+  const bin = getBin(LOCK, true).catch(async (e) => {
+    const prev = LOCKS[1];
+    if (prev) { try { const r = await getBin(prev, false); $('bar').style.width = '100%'; return r; } catch (e2) { /* report the first error */ } }
+    throw e;
+  });
+  bin.then(() => { loaded = true; }, () => msg('Нет связи с сервером. Проверьте интернет и обновите страницу.', true));
+
+  // after a successful opening: keep this page and its tour on the device, drop older tours (works without the service worker too)
+  async function commit(got) {
+    if (!('caches' in window)) return;
+    const url = new URL(got.lock.file, location.href).href, scope = new URL('./', location.href).href;
+    const tours = await caches.open(TOURS);
+    if (!(await tours.match(url))) await tours.put(url, new Response(got.bytes, { headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': String(got.bytes.length) } }));
+    await (await caches.open(PAGES)).put(scope, new Response(SELF, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Hold-Tour': got.lock.file, 'X-Hold-Version': got.lock.version || '' } }));
+    for (const name of await caches.keys()) {
+      if (name === 'hold-vr') { await caches.delete(name); continue; }      // cache of the first published version
+      const c = await caches.open(name);
+      for (const req of await c.keys()) if (/\/tour-[0-9a-f]+\.bin$/.test(req.url) && req.url !== url) await c.delete(req);
+    }
+  }
+
+  async function keyFor(pin, lock) {
+    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pin), 'PBKDF2', false, ['deriveKey']);
+    return crypto.subtle.deriveKey({ name: 'PBKDF2', salt: b64(lock.salt), iterations: lock.iter, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+  }
+  async function check(key, lock) {
+    try { await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64(lock.ivc) }, key, b64(lock.chk)); return true; } catch (e) { return false; }
   }
   async function open(pin, remembered) {
     $('lock').classList.add('hidden'); $('sub').textContent = remembered ? 'Открываю тур…' : 'Проверяю код…'; msg('');
-    const key = await keyFor(pin);
-    if (!(await check(key))) { store.set(null); return fail(); }
+    const key = await keyFor(pin, LOCK);
+    if (!(await check(key, LOCK))) { store.set(null); return fail(); }
     if ($('remember').checked) store.set(pin);
     $('sub').textContent = 'Открываю тур…';
-    if (got < LOCK.size) msg('Загружаю тур…');
-    const raw = await bin;
+    if (!loaded) msg('Загружаю тур…');
+    const got = await bin, lock = got.lock, current = lock === LOCK;
+    const k = current ? key : await keyFor(pin, lock);
+    if (!current) {
+      if (!(await check(k, lock))) throw new Error('код не подходит к сохранённой версии');
+      msg('Нет связи для обновления. Открываю сохранённую версию ' + (lock.version || '') + '.'); await sleep(1500);
+    }
     msg('Распаковываю…');
-    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: raw.subarray(5, 17) }, key, raw.subarray(17));
-    const html = await new Response(new Blob([plain]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: got.bytes.subarray(5, 17) }, k, got.bytes.subarray(17));
+    let html = await new Response(new Blob([plain]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+    if (current) { try { await commit(got); } catch (e) { /* storage full or blocked: the tour still opens */ } }
+    const build = { version: lock.version || '', file: lock.file, current, latest: LOCK.version };
+    html = html.replace(/<head[^>]*>/i, (m) => m + '<script>window.HOLD_BUILD=' + JSON.stringify(build).replace(/</g, '\\u003c') + ';<\/script>');
     document.open(); document.write(html); document.close();
   }
   function fail() {
