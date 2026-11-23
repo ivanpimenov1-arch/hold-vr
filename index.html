@@ -61,8 +61,9 @@
 <script>
 (() => {
   // LOCKS[0] — this release; LOCKS[1..] — earlier releases (newest first), opened only when this one cannot be loaded (offline after an update).
-  const LOCKS = [{"file":"tour-89e235801d.bin","size":24156138,"iter":600000,"salt":"Ncugtm2r2W6mTY1VZp7Ovg==","ivc":"Ejt2c/GwVoXDP0Wp","chk":"Da/xlj28tueo91G2SBrX3rKvf0Xs/Vo=","version":"2026-11-22 · 89e2358"},{"file":"tour-30b56c8a2d.bin","size":24154675,"iter":600000,"salt":"IZhgVl46wNUfBsAmNynplw==","ivc":"9pGY0/5jPnQ0X19z","chk":"8FocNCpPc4my34C+iZvxxelx61WM1Y8=","version":"2026-11-22 · 30b56c8"},{"file":"tour-f4912f4d20.bin","size":22877760,"iter":600000,"salt":"lZs8y9LUl/cUS7hQMv7UrA==","ivc":"LFiCPcWMJ+LuiaDK","chk":"G6QLfdU77R4y2lb4KCebZS4rxYx7dtA=","version":"2026-11-20 · f4912f4"},{"file":"tour-3c71b14a01.bin","size":21283903,"iter":600000,"salt":"8KK98FAw3kKdVxqu7lGUIQ==","ivc":"3uBWYyb65zB1xVH4","chk":"J+FOiGPAyq7zkpopk9zC7hg5MvUTWBQ=","version":"2026-11-19 · 3c71b14"},{"file":"tour-326bdf421a.bin","size":12764424,"iter":600000,"salt":"tQRzSuXeV+n8RKDh+YUjFA==","ivc":"eNg1nEliC2X/3EOc","chk":"3dtgmcCm3BpuYJf1c82QdhmzfEoHx8Q=","version":"2026-11-19 · 326bdf4"}];
+  const LOCKS = [{"file":"tour-f412c929ab.bin","size":24156847,"iter":600000,"salt":"IG0hfOxoK1iYw/5KZfMdcw==","ivc":"yBEvB5M9kQvQyCj4","chk":"O2d318dtK+2eGCZPMzy5H8rBN7tLOXw=","version":"2026-11-23 · f412c92"},{"file":"tour-89e235801d.bin","size":24156138,"iter":600000,"salt":"Ncugtm2r2W6mTY1VZp7Ovg==","ivc":"Ejt2c/GwVoXDP0Wp","chk":"Da/xlj28tueo91G2SBrX3rKvf0Xs/Vo=","version":"2026-11-22 · 89e2358"},{"file":"tour-30b56c8a2d.bin","size":24154675,"iter":600000,"salt":"IZhgVl46wNUfBsAmNynplw==","ivc":"9pGY0/5jPnQ0X19z","chk":"8FocNCpPc4my34C+iZvxxelx61WM1Y8=","version":"2026-11-22 · 30b56c8"},{"file":"tour-f4912f4d20.bin","size":22877760,"iter":600000,"salt":"lZs8y9LUl/cUS7hQMv7UrA==","ivc":"LFiCPcWMJ+LuiaDK","chk":"G6QLfdU77R4y2lb4KCebZS4rxYx7dtA=","version":"2026-11-20 · f4912f4"},{"file":"tour-3c71b14a01.bin","size":21283903,"iter":600000,"salt":"8KK98FAw3kKdVxqu7lGUIQ==","ivc":"3uBWYyb65zB1xVH4","chk":"J+FOiGPAyq7zkpopk9zC7hg5MvUTWBQ=","version":"2026-11-19 · 3c71b14"}];
   const LOCK = LOCKS[0];
+  const MEDIA = {"iter":600000,"salt":"c6PddIALWy8cRfhtTB0ppg==","files":{"film-30.mp4":{"file":"film-977ab2ae6e6745ce.bin","size":14638321},"film-60.mp4":{"file":"film-dc1540fcce15dc34.bin","size":28909835},"film-120.mp4":{"file":"film-ee838660bffd63d8.bin","size":56428184},"film-180.mp4":{"file":"film-0bbca2151d537947.bin","size":86222996}}};
   const PIN_LEN = 4, STORE = 'hold-vr-pin', TOURS = 'hold-vr-tours', PAGES = 'hold-vr-pages';
   const SELF = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;   // this page as served, kept as the offline copy
   const $ = (id) => document.getElementById(id);
@@ -120,6 +121,54 @@
   async function check(key, lock) {
     try { await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64(lock.ivc) }, key, b64(lock.chk)); return true; } catch (e) { return false; }
   }
+  // Only ciphertext is kept for offline playback. Give the player a revocable Blob for the selected film.
+  function mediaLoader(key) {
+    const encoder = new TextEncoder();
+    return async (name, signal, progress) => {
+      const entry = Object.hasOwn(MEDIA.files, name) && MEDIA.files[name];
+      if (!entry) throw new Error('Unknown film');
+      const { file, size } = entry;
+      const url = new URL(file, location.href).href;
+      const cache = await window.caches?.open('hold-vr-media').catch(() => null);
+      const decrypt = async (bytes) => {
+        if (bytes.length !== size || String.fromCharCode(...bytes.subarray(0, 5)) !== 'HFM01') {
+          throw new Error('Incomplete film');
+        }
+        const plain = await crypto.subtle.decrypt({
+          name: 'AES-GCM', iv: bytes.subarray(5, 17), additionalData: encoder.encode(name),
+        }, key, bytes.subarray(17));
+        if (signal.aborted) throw signal.reason;
+        return new Blob([plain], { type: 'video/mp4' });
+      };
+      const saved = await cache?.match(url);
+      if (saved) {
+        try { return await decrypt(new Uint8Array(await saved.arrayBuffer())); }
+        catch (error) {
+          if (signal.aborted) throw error;
+          await cache.delete(url);
+        }
+      }
+      if (!navigator.onLine) throw new Error('Film has not been saved');
+      const response = await fetch(url, { signal, cache: 'no-cache' });
+      if (!response.ok) throw new Error('Film unavailable');
+      const bytes = new Uint8Array(size), reader = response.body.getReader();
+      let offset = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (offset + value.length > size) { await reader.cancel(); throw new Error('Unexpected film size'); }
+        bytes.set(value, offset);
+        offset += value.length;
+        progress(offset / size);
+      }
+      if (offset !== size) throw new Error('Incomplete film');
+      const film = await decrypt(bytes);
+      if (cache) await cache.put(url, new Response(bytes, {
+        headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': String(size) },
+      })).catch(() => {});
+      return film;
+    };
+  }
   async function open(pin, remembered) {
     $('lock').classList.add('hidden'); $('sub').textContent = remembered ? 'Открываю тур…' : 'Проверяю код…'; msg('');
     const key = await keyFor(pin, LOCK);
@@ -143,6 +192,7 @@
       try { offline = await Promise.race([navigator.serviceWorker.ready.then((r) => !!r.active), sleep(4000).then(() => false)]); } catch (e) { offline = false; }
     }
     const build = { version: lock.version || '', file: lock.file, current, latest: LOCK.version, offline: saved && offline };
+    if (MEDIA) window.HOLD_MEDIA = mediaLoader(await keyFor(pin, MEDIA));
     html = html.replace(/<head[^>]*>/i, (m) => m + '<script>window.HOLD_BUILD=' + JSON.stringify(build).replace(/</g, '\\u003c') + ';<\/script>');
     document.open(); document.write(html); document.close();
   }
