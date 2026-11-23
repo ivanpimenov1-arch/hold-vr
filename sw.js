@@ -1,8 +1,8 @@
-// HOLD VR — keeps the tour on the device. Release c820274437.
+// HOLD VR — keeps the tour on the device. Release 252201a9a5.
 // Pages: network first (6 s), offline → the copy saved after the last successful opening.
 // tour-<hash>.bin: immutable, from the device first. The page itself saves the tour after it opened, so the first visit
 // works offline later even if this worker was installed only afterwards.
-const VERSION = 'c820274437';
+const VERSION = '252201a9a5';
 const SHELL = 'hold-vr-shell-' + VERSION, PAGES = 'hold-vr-pages', LEGACY = 'hold-vr';
 const FILES = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 self.addEventListener('install', (e) => e.waitUntil(caches.open(SHELL).then((c) => c.addAll(FILES.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting())));
